@@ -10,7 +10,7 @@ use crate::config::NetdiscoConfig;
 use crate::db;
 
 /// Run the scheduler loop, enqueuing periodic jobs.
-pub async fn run_scheduler(config: Arc<NetdiscoConfig>, pool: PgPool) -> Result<()> {
+pub async fn run_scheduler(_config: Arc<NetdiscoConfig>, pool: PgPool) -> Result<()> {
     info!("Scheduler started");
 
     let mut tick = interval(Duration::from_secs(60)); // Check every minute

@@ -1,10 +1,12 @@
 //! Web request handlers.
 
-use actix_web::{web, HttpResponse, HttpRequest};
+use actix_web::{web, HttpResponse};
 use actix_session::Session;
 use serde::Deserialize;
+use tracing::error;
 
 use super::AppState;
+use super::auth;
 use crate::db;
 
 // ==================== Page Handlers ====================
@@ -15,7 +17,10 @@ pub async fn index(state: web::Data<AppState>) -> HttpResponse {
         .finish()
 }
 
-pub async fn inventory(state: web::Data<AppState>) -> HttpResponse {
+pub async fn inventory(state: web::Data<AppState>, session: Session) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let devices = db::list_devices(&state.pool, Some(100)).await.unwrap_or_default();
     let device_count = db::device_count(&state.pool).await.unwrap_or(0);
     let node_count = db::node_count(&state.pool, true).await.unwrap_or(0);
@@ -38,8 +43,12 @@ pub struct DeviceQuery {
 
 pub async fn device_search(
     state: web::Data<AppState>,
+    session: Session,
     query: web::Query<DeviceQuery>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     if let Some(q) = &query.q {
         let devices = db::search_devices(&state.pool, q).await.unwrap_or_default();
         HttpResponse::Ok().json(devices)
@@ -51,8 +60,12 @@ pub async fn device_search(
 
 pub async fn device_detail(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip_str = path.into_inner();
     let ip: ipnetwork::IpNetwork = match ip_str.parse() {
         Ok(ip) => ip,
@@ -62,14 +75,21 @@ pub async fn device_detail(
     match db::find_device(&state.pool, &ip).await {
         Ok(Some(device)) => HttpResponse::Ok().json(device),
         Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "Device not found"})),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
+        Err(e) => {
+            error!("Database error looking up device {}: {}", ip, e);
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": "Internal server error"}))
+        }
     }
 }
 
 pub async fn device_ports(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -80,8 +100,12 @@ pub async fn device_ports(
 
 pub async fn device_modules(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -92,8 +116,12 @@ pub async fn device_modules(
 
 pub async fn device_neighbors(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -106,8 +134,12 @@ pub async fn device_neighbors(
 
 pub async fn device_addresses(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -118,8 +150,12 @@ pub async fn device_addresses(
 
 pub async fn device_vlans(
     state: web::Data<AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -137,8 +173,12 @@ pub struct NodeSearch {
 
 pub async fn search_node(
     state: web::Data<AppState>,
+    session: Session,
     query: web::Query<NodeSearch>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     if let Some(q) = &query.q {
         // Try MAC search first, then IP search
         if q.contains(':') || q.contains('-') || q.contains('.') {
@@ -156,8 +196,12 @@ pub async fn search_node(
 
 pub async fn search_device(
     state: web::Data<AppState>,
+    session: Session,
     query: web::Query<DeviceQuery>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     if let Some(q) = &query.q {
         let devices = db::search_devices(&state.pool, q).await.unwrap_or_default();
         HttpResponse::Ok().json(devices)
@@ -166,26 +210,41 @@ pub async fn search_device(
     }
 }
 
-pub async fn search_vlan() -> HttpResponse {
+pub async fn search_vlan(session: Session, state: web::Data<AppState>) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     HttpResponse::Ok().json(serde_json::json!({"status": "not_implemented"}))
 }
 
-pub async fn search_port() -> HttpResponse {
+pub async fn search_port(session: Session, state: web::Data<AppState>) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     HttpResponse::Ok().json(serde_json::json!({"status": "not_implemented"}))
 }
 
 // ==================== Report & Admin Handlers ====================
 
-pub async fn report(path: web::Path<String>) -> HttpResponse {
+pub async fn report(session: Session, state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     HttpResponse::Ok().json(serde_json::json!({"report": path.into_inner(), "status": "not_implemented"}))
 }
 
-pub async fn admin_job_queue(state: web::Data<AppState>) -> HttpResponse {
+pub async fn admin_job_queue(state: web::Data<AppState>, session: Session) -> HttpResponse {
+    if let Some(resp) = auth::require_admin(&session, &state.config) {
+        return resp;
+    }
     let jobs = db::list_jobs(&state.pool, 50).await.unwrap_or_default();
     HttpResponse::Ok().json(jobs)
 }
 
-pub async fn admin_users() -> HttpResponse {
+pub async fn admin_users(state: web::Data<AppState>, session: Session) -> HttpResponse {
+    if let Some(resp) = auth::require_admin(&session, &state.config) {
+        return resp;
+    }
     HttpResponse::Ok().json(serde_json::json!({"status": "not_implemented"}))
 }
 
@@ -206,9 +265,11 @@ pub async fn login_submit(
     session: Session,
     form: web::Form<LoginForm>,
 ) -> HttpResponse {
+    // Use a consistent error message for all failure cases to prevent username enumeration
+    let invalid_msg = serde_json::json!({"error": "Invalid credentials"});
+
     match db::find_user(&state.pool, &form.username).await {
         Ok(Some(user)) => {
-            // Verify password
             if let Some(ref stored_hash) = user.password {
                 match bcrypt::verify(&form.password, stored_hash) {
                     Ok(true) => {
@@ -218,13 +279,13 @@ pub async fn login_submit(
                             .insert_header(("Location", "/"))
                             .finish()
                     }
-                    _ => HttpResponse::Unauthorized().json(serde_json::json!({"error": "Invalid credentials"})),
+                    _ => HttpResponse::Unauthorized().json(invalid_msg),
                 }
             } else {
-                HttpResponse::Unauthorized().json(serde_json::json!({"error": "No password set"}))
+                HttpResponse::Unauthorized().json(invalid_msg)
             }
         }
-        _ => HttpResponse::Unauthorized().json(serde_json::json!({"error": "Invalid credentials"})),
+        _ => HttpResponse::Unauthorized().json(invalid_msg),
     }
 }
 
@@ -235,6 +296,9 @@ pub async fn logout(session: Session) -> HttpResponse {
         .finish()
 }
 
-pub async fn change_password() -> HttpResponse {
+pub async fn change_password(session: Session, state: web::Data<AppState>) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     HttpResponse::Ok().json(serde_json::json!({"status": "not_implemented"}))
 }

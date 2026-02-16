@@ -1,6 +1,5 @@
 //! DNS resolution utilities.
 
-use anyhow::Result;
 use std::net::IpAddr;
 
 /// Resolve an IP address to a hostname.

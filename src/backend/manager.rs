@@ -34,15 +34,21 @@ pub async fn run_worker(worker_id: usize, config: Arc<NetdiscoConfig>, pool: PgP
                 match result {
                     Ok(Ok(log_msg)) => {
                         info!("Worker {}: job {} completed", worker_id, job_id);
-                        db::complete_job(&pool, job_id, "done", &log_msg).await.ok();
+                        if let Err(e) = db::complete_job(&pool, job_id, "done", &log_msg).await {
+                            error!("Worker {}: failed to mark job {} as done: {}", worker_id, job_id, e);
+                        }
                     }
                     Ok(Err(e)) => {
                         error!("Worker {}: job {} failed: {}", worker_id, job_id, e);
-                        db::complete_job(&pool, job_id, "error", &e.to_string()).await.ok();
+                        if let Err(db_err) = db::complete_job(&pool, job_id, "error", &e.to_string()).await {
+                            error!("Worker {}: failed to mark job {} as error: {}", worker_id, job_id, db_err);
+                        }
                     }
                     Err(_) => {
                         error!("Worker {}: job {} timed out", worker_id, job_id);
-                        db::complete_job(&pool, job_id, "error", "Job timed out").await.ok();
+                        if let Err(e) = db::complete_job(&pool, job_id, "error", "Job timed out").await {
+                            error!("Worker {}: failed to mark job {} as timed out: {}", worker_id, job_id, e);
+                        }
                     }
                 }
             }

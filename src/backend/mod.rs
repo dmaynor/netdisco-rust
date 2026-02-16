@@ -12,7 +12,6 @@ use tokio::signal;
 use tracing::info;
 
 use crate::config::NetdiscoConfig;
-use crate::worker;
 
 /// Start the backend daemon.
 pub async fn start_backend(config: Arc<NetdiscoConfig>, pool: PgPool) -> Result<()> {
@@ -56,18 +55,24 @@ pub async fn start_backend(config: Arc<NetdiscoConfig>, pool: PgPool) -> Result<
 }
 
 /// Calculate number of worker tasks from config string (e.g., "AUTO * 2").
+/// Bounded between 1 and 256 to prevent resource exhaustion.
 fn calculate_workers(tasks_str: &str) -> usize {
-    if tasks_str.starts_with("AUTO") {
+    const MIN_WORKERS: usize = 1;
+    const MAX_WORKERS: usize = 256;
+
+    let raw = if tasks_str.starts_with("AUTO") {
         let cpus = num_cpus();
         if let Some(multiplier) = tasks_str.split('*').nth(1) {
-            let mult: usize = multiplier.trim().parse().unwrap_or(2);
-            cpus * mult
+            let mult: usize = multiplier.trim().parse().unwrap_or(2).min(16);
+            cpus.saturating_mul(mult)
         } else {
-            cpus * 2
+            cpus.saturating_mul(2)
         }
     } else {
         tasks_str.parse().unwrap_or(4)
-    }
+    };
+
+    raw.clamp(MIN_WORKERS, MAX_WORKERS)
 }
 
 fn num_cpus() -> usize {

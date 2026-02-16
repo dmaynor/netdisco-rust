@@ -87,7 +87,7 @@ impl Device {
         match &self.layers {
             Some(layers) => {
                 let idx = (7 - layer) as usize;
-                layers.chars().nth(idx).map_or(false, |c| c == '1')
+                layers.chars().nth(idx) == Some('1')
             }
             None => false,
         }

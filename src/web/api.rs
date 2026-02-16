@@ -18,18 +18,28 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 }
 
 use actix_web::HttpResponse;
+use actix_session::Session;
 use serde::Deserialize;
+use tracing::error;
 use crate::db;
+use super::auth;
 
-async fn api_list_devices(state: web::Data<super::AppState>) -> HttpResponse {
+async fn api_list_devices(state: web::Data<super::AppState>, session: Session) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let devices = db::list_devices(&state.pool, Some(1000)).await.unwrap_or_default();
     HttpResponse::Ok().json(devices)
 }
 
 async fn api_get_device(
     state: web::Data<super::AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -37,14 +47,21 @@ async fn api_get_device(
     match db::find_device(&state.pool, &ip).await {
         Ok(Some(device)) => HttpResponse::Ok().json(device),
         Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "Not found"})),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
+        Err(e) => {
+            error!("Database error in api_get_device: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": "Internal server error"}))
+        }
     }
 }
 
 async fn api_device_ports(
     state: web::Data<super::AppState>,
+    session: Session,
     path: web::Path<String>,
 ) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let ip: ipnetwork::IpNetwork = match path.into_inner().parse() {
         Ok(ip) => ip,
         Err(_) => return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid IP"})),
@@ -55,19 +72,24 @@ async fn api_device_ports(
 
 async fn api_search_node(
     state: web::Data<super::AppState>,
+    session: Session,
     query: web::Query<super::handlers::NodeSearch>,
 ) -> HttpResponse {
-    super::handlers::search_node(state, query).await
+    super::handlers::search_node(state, session, query).await
 }
 
 async fn api_search_device(
     state: web::Data<super::AppState>,
+    session: Session,
     query: web::Query<super::handlers::DeviceQuery>,
 ) -> HttpResponse {
-    super::handlers::search_device(state, query).await
+    super::handlers::search_device(state, session, query).await
 }
 
-async fn api_list_jobs(state: web::Data<super::AppState>) -> HttpResponse {
+async fn api_list_jobs(state: web::Data<super::AppState>, session: Session) -> HttpResponse {
+    if let Some(resp) = auth::require_auth(&session, &state.config) {
+        return resp;
+    }
     let jobs = db::list_jobs(&state.pool, 100).await.unwrap_or_default();
     HttpResponse::Ok().json(jobs)
 }
@@ -81,8 +103,19 @@ struct JobRequest {
 
 async fn api_enqueue_job(
     state: web::Data<super::AppState>,
+    session: Session,
     body: web::Json<JobRequest>,
 ) -> HttpResponse {
+    // Require admin for job creation
+    if let Some(resp) = auth::require_admin(&session, &state.config) {
+        return resp;
+    }
+
+    // Validate action against allowed list
+    if !auth::is_valid_job_action(&body.action) {
+        return HttpResponse::BadRequest().json(serde_json::json!({"error": "Invalid action type"}));
+    }
+
     let device_ip = body.device.as_ref().and_then(|d| d.parse().ok());
     match db::enqueue_job(
         &state.pool,
@@ -92,6 +125,9 @@ async fn api_enqueue_job(
         None,
     ).await {
         Ok(job_id) => HttpResponse::Ok().json(serde_json::json!({"job": job_id})),
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
+        Err(e) => {
+            error!("Failed to enqueue job: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": "Failed to enqueue job"}))
+        }
     }
 }

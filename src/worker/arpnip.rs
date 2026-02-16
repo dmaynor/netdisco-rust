@@ -3,14 +3,20 @@
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use sqlx::PgPool;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, error, debug};
 
 use crate::config::NetdiscoConfig;
 use crate::db;
 use crate::snmp::SnmpClient;
+use crate::util::permission;
 
 /// Collect ARP table from a single device.
 pub async fn arpnip_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetwork) -> Result<String> {
+    // Check ACL before proceeding
+    if !permission::is_permitted(ip, &config.arpnip_only, &config.arpnip_no) {
+        return Err(anyhow::anyhow!("Device {} is not permitted by arpnip ACL", ip));
+    }
+
     info!("Arpnipping device {}", ip);
 
     let host = ip.ip().to_string();
@@ -34,19 +40,23 @@ pub async fn arpnip_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetwor
     }
 
     // Mark old entries as inactive
-    sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE node_ip SET active = false WHERE time_last < NOW() - interval '5 minutes' AND active = true"
     )
         .execute(pool)
         .await
-        .ok();
+    {
+        error!("Failed to deactivate old ARP entries: {}", e);
+    }
 
     // Update last_arpnip timestamp
-    sqlx::query("UPDATE device SET last_arpnip = NOW() WHERE ip = $1")
+    if let Err(e) = sqlx::query("UPDATE device SET last_arpnip = NOW() WHERE ip = $1")
         .bind(ip)
         .execute(pool)
         .await
-        .ok();
+    {
+        error!("Failed to update last_arpnip for {}: {}", ip, e);
+    }
 
     let msg = format!("Arpnip {}: stored {} of {} entries", ip, stored, arp_entries.len());
     info!("{}", msg);

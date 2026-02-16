@@ -159,7 +159,7 @@ fn test_db_connection_string_with_special_chars() {
         pass: "pass@word".into(),
         port: 5432,
     };
-    assert_eq!(db.connection_string(), "postgres://netdisco:pass@word@10.0.0.1:5432/netdisco");
+    assert_eq!(db.connection_string(), "postgres://netdisco:pass%40word@10.0.0.1:5432/netdisco");
 }
 
 // ==================== Config Override Tests ====================

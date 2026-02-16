@@ -6,7 +6,6 @@
 pub mod settings;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::info;
 
@@ -22,7 +21,7 @@ pub fn load_config(config_dir: Option<&Path>) -> Result<NetdiscoConfig> {
     let home = config_dir
         .map(PathBuf::from)
         .or_else(|| std::env::var("NETDISCO_HOME").ok().map(PathBuf::from))
-        .or_else(|| dirs::home_dir())
+        .or_else(dirs::home_dir)
         .context("Cannot determine home directory")?;
 
     // Load default config

@@ -6,15 +6,21 @@
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use sqlx::PgPool;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, error, debug};
 
 use crate::config::NetdiscoConfig;
 use crate::db;
 use crate::snmp::SnmpClient;
 use crate::models::device::Device;
+use crate::util::permission;
 
 /// Discover a single device by IP address.
 pub async fn discover_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetwork) -> Result<String> {
+    // Check ACL before proceeding
+    if !permission::is_permitted(ip, &config.discover_only, &config.discover_no) {
+        return Err(anyhow::anyhow!("Device {} is not permitted by discover ACL", ip));
+    }
+
     info!("Discovering device {}", ip);
 
     let host = ip.ip().to_string();
@@ -71,7 +77,13 @@ pub async fn discover_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetw
         .context("Failed to store device")?;
 
     // 3. Discover interfaces
-    let interfaces = client.get_interfaces().unwrap_or_default();
+    let interfaces = match client.get_interfaces() {
+        Ok(ifaces) => ifaces,
+        Err(e) => {
+            warn!("Failed to enumerate interfaces for {}: {}", ip, e);
+            Vec::new()
+        }
+    };
     info!("  Found {} interfaces", interfaces.len());
 
     for iface in &interfaces {
@@ -103,7 +115,7 @@ pub async fn discover_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetw
             tags: None,
         };
 
-        sqlx::query(
+        if let Err(e) = sqlx::query(
             r#"INSERT INTO device_port (ip, port, descr, up, up_admin, type, speed, ifindex)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (port, ip) DO UPDATE SET
@@ -111,23 +123,28 @@ pub async fn discover_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetw
                 up = EXCLUDED.up,
                 up_admin = EXCLUDED.up_admin,
                 type = EXCLUDED.type,
-                speed = EXCLUDED.speed"#
+                speed = EXCLUDED.speed,
+                ifindex = EXCLUDED.ifindex"#
         )
-            .bind(&port.ip)
+            .bind(port.ip)
             .bind(&port.port)
             .bind(&port.descr)
             .bind(&port.up)
             .bind(&port.up_admin)
             .bind(&port.port_type)
             .bind(&port.speed)
-            .bind(&port.ifindex)
+            .bind(port.ifindex)
             .execute(pool)
             .await
-            .ok();
+        {
+            error!("Failed to store port {} on {}: {}", port.port, ip, e);
+        }
     }
 
     // 4. Try to discover neighbors (LLDP/CDP)
-    discover_neighbors(config, pool, ip, &client).await.ok();
+    if let Err(e) = discover_neighbors(config, pool, ip, &client).await {
+        warn!("Failed to discover neighbors for {}: {}", ip, e);
+    }
 
     let msg = format!("Discovered {} with {} interfaces", ip, interfaces.len());
     info!("{}", msg);
@@ -137,7 +154,7 @@ pub async fn discover_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetw
 /// Discover neighbors via LLDP and CDP.
 async fn discover_neighbors(
     config: &NetdiscoConfig,
-    pool: &PgPool,
+    _pool: &PgPool,
     device_ip: &IpNetwork,
     client: &SnmpClient,
 ) -> Result<()> {
@@ -149,10 +166,10 @@ async fn discover_neighbors(
 
     // Try LLDP first
     let lldp_names = client.walk(&crate::snmp::oids::LLDP_REM_SYS_NAME).unwrap_or_default();
-    let lldp_ports = client.walk(&crate::snmp::oids::LLDP_REM_PORT_ID).unwrap_or_default();
-    let lldp_addrs = client.walk(&crate::snmp::oids::LLDP_REM_MAN_ADDR).unwrap_or_default();
+    let _lldp_ports = client.walk(&crate::snmp::oids::LLDP_REM_PORT_ID).unwrap_or_default();
+    let _lldp_addrs = client.walk(&crate::snmp::oids::LLDP_REM_MAN_ADDR).unwrap_or_default();
 
-    for (oid, name_bytes) in &lldp_names {
+    for (_oid, name_bytes) in &lldp_names {
         let remote_name = String::from_utf8_lossy(name_bytes).to_string();
         info!("  LLDP neighbor: {}", remote_name);
         // TODO: resolve name to IP/auto-discover
@@ -160,7 +177,7 @@ async fn discover_neighbors(
 
     // Try CDP
     let cdp_devices = client.walk(&crate::snmp::oids::CDP_CACHE_DEVICE_ID).unwrap_or_default();
-    for (oid, device_bytes) in &cdp_devices {
+    for (_oid, device_bytes) in &cdp_devices {
         let remote_device = String::from_utf8_lossy(device_bytes).to_string();
         info!("  CDP neighbor: {}", remote_device);
     }

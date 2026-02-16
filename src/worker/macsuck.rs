@@ -3,15 +3,21 @@
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use sqlx::PgPool;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, error, debug};
 
 use crate::config::NetdiscoConfig;
 use crate::db;
 use crate::snmp::SnmpClient;
 use crate::models::node::Node;
+use crate::util::permission;
 
 /// Collect MAC address table from a single device.
 pub async fn macsuck_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetwork) -> Result<String> {
+    // Check ACL before proceeding
+    if !permission::is_permitted(ip, &config.macsuck_only, &config.macsuck_no) {
+        return Err(anyhow::anyhow!("Device {} is not permitted by macsuck ACL", ip));
+    }
+
     info!("Macsucking device {}", ip);
 
     let host = ip.ip().to_string();
@@ -46,20 +52,24 @@ pub async fn macsuck_device(config: &NetdiscoConfig, pool: &PgPool, ip: &IpNetwo
     }
 
     // Mark old entries as inactive
-    sqlx::query(
+    if let Err(e) = sqlx::query(
         "UPDATE node SET active = false WHERE switch = $1 AND time_last < NOW() - interval '5 minutes' AND active = true"
     )
         .bind(ip)
         .execute(pool)
         .await
-        .ok();
+    {
+        error!("Failed to deactivate old nodes for {}: {}", ip, e);
+    }
 
     // Update last_macsuck timestamp
-    sqlx::query("UPDATE device SET last_macsuck = NOW() WHERE ip = $1")
+    if let Err(e) = sqlx::query("UPDATE device SET last_macsuck = NOW() WHERE ip = $1")
         .bind(ip)
         .execute(pool)
         .await
-        .ok();
+    {
+        error!("Failed to update last_macsuck for {}: {}", ip, e);
+    }
 
     let msg = format!("Macsuck {}: stored {} of {} MACs", ip, stored, mac_entries.len());
     info!("{}", msg);

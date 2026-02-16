@@ -121,13 +121,33 @@ impl Default for DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    /// Build a PostgreSQL connection string.
+    /// Build a PostgreSQL connection string with proper URL encoding.
     pub fn connection_string(&self) -> String {
         format!(
             "postgres://{}:{}@{}:{}/{}",
-            self.user, self.pass, self.host, self.port, self.name
+            url_encode(&self.user),
+            url_encode(&self.pass),
+            self.host,
+            self.port,
+            url_encode(&self.name),
         )
     }
+}
+
+/// Percent-encode special characters in a URL component.
+fn url_encode(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    encoded
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

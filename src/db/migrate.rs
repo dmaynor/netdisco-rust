@@ -18,12 +18,19 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 }
 
 /// Check current schema version.
+/// Returns 0 if migration table doesn't exist yet; propagates real errors.
 pub async fn schema_version(pool: &PgPool) -> Result<i64> {
-    let version = sqlx::query_scalar::<_, i64>(
+    match sqlx::query_scalar::<_, i64>(
         "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations"
     )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-    Ok(version)
+    .fetch_one(pool)
+    .await {
+        Ok(version) => Ok(version),
+        Err(sqlx::Error::Database(db_err))
+            if db_err.message().contains("does not exist") =>
+        {
+            Ok(0)
+        }
+        Err(e) => Err(e).context("Failed to query schema version"),
+    }
 }
