@@ -1,0 +1,91 @@
+[package]
+name = "netdisco"
+version = "3.0.0"
+edition = "2021"
+authors = ["Netdisco Contributors"]
+description = "An open source web-based network management tool - Rust port"
+license = "BSD-3-Clause"
+repository = "https://github.com/netdisco/netdisco"
+
+[[bin]]
+name = "netdisco-web"
+path = "src/bin/web.rs"
+
+[[bin]]
+name = "netdisco-backend"
+path = "src/bin/backend.rs"
+
+[[bin]]
+name = "netdisco-do"
+path = "src/bin/do_cmd.rs"
+
+[[bin]]
+name = "netdisco-deploy"
+path = "src/bin/deploy.rs"
+
+[dependencies]
+# Web framework
+actix-web = "4"
+actix-rt = "2"
+actix-files = "0.6"
+actix-session = { version = "0.9", features = ["cookie-session"] }
+actix-identity = "0.7"
+
+# Database
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "ipnetwork",
+    "json",
+    "migrate",
+] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Networking
+ipnetwork = "0.20"
+
+# SNMP
+snmp = "0.2"
+
+# Templating
+tera = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-actix-web = "0.7"
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+bcrypt = "0.15"
+rand = "0.8"
+base64 = "0.22"
+url = "2"
+cron = "0.12"
+
+# DNS
+trust-dns-resolver = "0.23"
+dns-lookup = "2"
+
+[dev-dependencies]
+actix-test = "0.1"
+tempfile = "3"
+serial_test = "3"
+tokio-test = "0.4"
+pretty_assertions = "1"
